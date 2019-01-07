@@ -6,56 +6,14 @@ import React from 'react';
  */
 export default class TransitionManager extends React.Component {
   /**
-   *
+   * 
    */
-  componentWillMount() {
-    this.mountFromInverted = [];
+  constructor() {
+    super();
+    this.state = {instance: this};
     this.timeouts = {};
     this.mounted = true;
-
-    const transitions = {
-      mounted: {
-        value: false,
-        transitioningTo: true
-      }
-    };
-
-    const transitionConfigs = this.props.transitions || {};
-    Object.keys(transitionConfigs).forEach(transitionName => {
-      let {value, mountFromInverted, duration} = transitionConfigs[transitionName];
-
-      if (mountFromInverted) this.mountFromInverted.push(transitionName);
-
-      duration = duration == null ? 333 : duration;
-      if (!isNaN(Number(duration))) {
-        duration = {
-          true: duration,
-          false: duration
-        }
-      }
-
-      transitions[transitionName] = {
-        value: mountFromInverted ? !value : value,
-        transitioningTo: null,
-        duration
-      }
-    });
-
-    this.setState({transitions});
-  }
-
-  /**
-   *
-   */
-  componentDidMount() {
-    const {transitions} = this.state;
-
-    this.mountFromInverted.forEach(transitionName => {
-      const currentValue = transitions[transitionName].value;
-      this.handleTransition(transitionName, !currentValue);
-    });
-
-    this.setTransitionValues('mounted', {value: true, transitioningTo: null});
+    this.initialized = false;
   }
 
   /**
@@ -63,6 +21,22 @@ export default class TransitionManager extends React.Component {
    */
   componentWillUnmount() {
     this.mounted = false;
+  }
+
+  /**
+   * 
+   */
+  static getDerivedStateFromProps(props, state) {
+    if (!state.instance.initialized) return _initialize(props, state);
+    
+    Object.keys(props.transitions).forEach(transitionName => {
+      const newValue = props.transitions[transitionName].value;
+      const oldValue = state.transitions[transitionName].value;
+      const transitioningTo = state.transitions[transitionName].transitioningTo;
+      if ((newValue !== oldValue) && (newValue !== transitioningTo)) setTimeout(() => state.instance.handleTransition(transitionName, newValue), 0);
+    });
+
+    return state;
   }
 
   /**
@@ -90,17 +64,23 @@ export default class TransitionManager extends React.Component {
 
     clearTimeout(this.timeouts[transitionName]);
     const transition = this.state.transitions[transitionName];
-    const duration = transition.duration[value];
-    
+    const duration = transition.duration[value] || transition.duration;
+
 
     this.setTransitionValues(transitionName, {
       transitioningTo: value,
+      transitioningFrom: transition.value,
       transitioningSince: Date.now()
     });
 
 
     if (duration) this.timeouts[transitionName] = setTimeout(() => {
-      this.setTransitionValues(transitionName, {value, transitioningTo: null, transitioningSince: null});
+      this.setTransitionValues(transitionName, {
+        value,
+        transitioningTo: null,
+        transitioningFrom: null,
+        transitioningSince: null
+      });
     }, duration);
   }
 
@@ -109,8 +89,7 @@ export default class TransitionManager extends React.Component {
    */
   getTransitionValues() {
     return Object.keys(this.state.transitions).reduce((agg, transitionName) => {
-      const { value, transitioningTo, transitioningSince } = this.state.transitions[transitionName];
-      agg[transitionName] = {value, transitioningTo, transitioningSince};
+      agg[transitionName] = {...this.state.transitions[transitionName]};
       return agg;
     }, {});
   }
@@ -133,9 +112,37 @@ export default class TransitionManager extends React.Component {
     });
 
     return <React.Fragment>
-    {
-      childrenWithProps
-    }
+      {
+        childrenWithProps
+      }
     </React.Fragment>
   }
+}
+
+
+/**
+ * 
+ */
+function _initialize(props, state) {
+  state.instance.initialized = true;
+  const transitions = state.transitions = {
+  };
+
+  const transitionConfigs = props.transitions || {};
+  Object.keys(transitionConfigs).forEach(transitionName => {
+    let { value, startingState, duration } = transitionConfigs[transitionName];
+
+    duration = duration == null ? 333 : duration;
+
+    transitions[transitionName] = {
+      value: startingState != null ? startingState : value,
+      transitioningTo: null,
+      transitioningFrom: null,
+      duration
+    }
+
+    if (startingState != null) state.instance.handleTransition(transitionName, props.transitions[transitionName].value);
+  });
+
+  return state;
 }
