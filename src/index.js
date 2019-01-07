@@ -10,10 +10,10 @@ export default class TransitionManager extends React.Component {
    */
   constructor() {
     super();
-    this.state = {instance: this};
+
+    this.state = {};
     this.timeouts = {};
     this.mounted = true;
-    this.initialized = false;
   }
 
   /**
@@ -27,13 +27,13 @@ export default class TransitionManager extends React.Component {
    * 
    */
   static getDerivedStateFromProps(props, state) {
-    if (!state.instance.initialized) return _initialize(props, state);
-    
+    if (!state.initialized) return _initialize(props, state);
+
     Object.keys(props.transitions).forEach(transitionName => {
       const newValue = props.transitions[transitionName].value;
       const oldValue = state.transitions[transitionName].value;
       const transitioningTo = state.transitions[transitionName].transitioningTo;
-      if ((newValue !== oldValue) && (newValue !== transitioningTo)) setTimeout(() => state.instance.handleTransition(transitionName, newValue), 0);
+      if ((newValue !== oldValue) && (newValue !== transitioningTo)) state = _beginTransition(state, transitionName, newValue);
     });
 
     return state;
@@ -42,46 +42,40 @@ export default class TransitionManager extends React.Component {
   /**
    *
    */
-  setTransitionValues(transitionName, values) {
-    if (!this.mounted) return;
+  componentDidUpdate() {
+    if (!this.state.hasUpdated) this.setState(prevState => ({...prevState, hasUpdated: true}));
+    const { transitions } = this.state;
+    Object.keys(transitions).forEach(transitionName => {
+      const transition = transitions[transitionName];
+      if (!transition.transitioningSince) return; // Not transitioning, ignore
+      const previous = this.timeouts[transitionName];
 
-    this.setState((prevState) => ({
-      transitions: {
-        ...prevState.transitions,
-        [transitionName]: {
-          ...prevState.transitions[transitionName],
-          ...values
-        }
+      if (previous) {
+        if (previous.transition === transition) return; // Already handling, ignore
+        // Not handling previous transition. Override existing, if present, and
+        // handle latest transition.
+        clearTimeout(previous.timer);
       }
-    }));
-  }
 
-  /**
-   *
-   */
-  handleTransition(transitionName, value) {
-    const self = this;
+      const current = this.timeouts[transitionName] = { transition };
 
-    clearTimeout(this.timeouts[transitionName]);
-    const transition = this.state.transitions[transitionName];
-    const duration = transition.duration[value] || transition.duration;
+      const duration = transition.duration[transition.value] || transition.duration;
+      this.timeouts[transitionName].timer = setTimeout(() => {
+        // Redundant check against race conditions to ensure that the same
+        // transition is still active.
+        if (current !== this.timeouts[transitionName]) return;
+        this.timeouts[transitionName] = null;
 
-
-    this.setTransitionValues(transitionName, {
-      transitioningTo: value,
-      transitioningFrom: transition.value,
-      transitioningSince: Date.now()
+        this.setState((prevState) => {
+          return _setTransitionValues(prevState, transitionName, {
+            value: transition.transitioningTo,
+            transitioningTo: null,
+            transitioningFrom: null,
+            transitioningSince: null
+          });
+        });
+      }, duration);
     });
-
-
-    if (duration) this.timeouts[transitionName] = setTimeout(() => {
-      this.setTransitionValues(transitionName, {
-        value,
-        transitioningTo: null,
-        transitioningFrom: null,
-        transitioningSince: null
-      });
-    }, duration);
   }
 
   /**
@@ -89,7 +83,7 @@ export default class TransitionManager extends React.Component {
    */
   getTransitionValues() {
     return Object.keys(this.state.transitions).reduce((agg, transitionName) => {
-      agg[transitionName] = {...this.state.transitions[transitionName]};
+      agg[transitionName] = { ...this.state.transitions[transitionName] };
       return agg;
     }, {});
   }
@@ -98,6 +92,9 @@ export default class TransitionManager extends React.Component {
    *
    */
   render() {
+    // This is stupid, but componentDidUpdate is not called after initial update.
+    if (!this.state.hasUpdated) setTimeout(() => this.mounted && this.forceUpdate());
+
     const { children, transitions = {}, render, ...props } = this.props;
 
     const transitionProps = {
@@ -124,9 +121,13 @@ export default class TransitionManager extends React.Component {
  * 
  */
 function _initialize(props, state) {
-  state.instance.initialized = true;
-  const transitions = state.transitions = {
+  state = {
+    ...state,
+    transitions: {},
+    initialized: true
   };
+
+  const transitions = state.transitions;
 
   const transitionConfigs = props.transitions || {};
   Object.keys(transitionConfigs).forEach(transitionName => {
@@ -141,8 +142,41 @@ function _initialize(props, state) {
       duration
     }
 
-    if (startingState != null) state.instance.handleTransition(transitionName, props.transitions[transitionName].value);
+    if (startingState != null) state = _beginTransition(state, transitionName, props.transitions[transitionName].value);
   });
 
   return state;
+}
+
+
+/**
+ *
+ */
+function _beginTransition(state, transitionName, value) {
+  const transition = state.transitions[transitionName];
+
+  if (value === transition.value) return state; // No change in destination, ignore.
+
+  return _setTransitionValues(state, transitionName, {
+    transitioningTo: value,
+    transitioningFrom: transition.value,
+    transitioningSince: Date.now()
+  });
+}
+
+
+/**
+ *
+ */
+function _setTransitionValues(state, transitionName, values) {
+  return {
+    ...state,
+    transitions: {
+      ...state.transitions,
+      [transitionName]: {
+        ...state.transitions[transitionName],
+        ...values
+      }
+    }
+  };
 }
