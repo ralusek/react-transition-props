@@ -1,6 +1,6 @@
 {
   "name": "react-transition-props",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A component for managing React transitions.",
   "repository": {
     "type": "git",
