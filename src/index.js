@@ -43,24 +43,23 @@ export default class TransitionManager extends React.Component {
    *
    */
   componentDidUpdate() {
-    if (!this.state.hasUpdated) this.setState(prevState => ({...prevState, hasUpdated: true}));
+    if (!this.state.hasUpdated) this.setState(prevState => ({ ...prevState, hasUpdated: true }));
     const { transitions } = this.state;
+
+    let newState = this.state;
+
     Object.keys(transitions).forEach(transitionName => {
       const transition = transitions[transitionName];
-      if (!transition.transitioningSince) return; // Not transitioning, ignore
+      if (!transition.isNew) return; // Not new transition, ignore.
+
+      newState = _setTransitionValues(newState, transitionName, {isNew: false});
+
       const previous = this.timeouts[transitionName];
 
-      if (previous) {
-        if (previous.transition === transition) return; // Already handling, ignore
-        // Not handling previous transition. Override existing, if present, and
-        // handle latest transition.
-        clearTimeout(previous.timer);
-      }
-
-      const current = this.timeouts[transitionName] = { transition };
+      clearTimeout(previous);
 
       const duration = transition.duration[transition.value] || transition.duration;
-      this.timeouts[transitionName].timer = setTimeout(() => {
+      const current = this.timeouts[transitionName] = setTimeout(() => {
         // Redundant check against race conditions to ensure that the same
         // transition is still active.
         if (current !== this.timeouts[transitionName]) return;
@@ -76,6 +75,8 @@ export default class TransitionManager extends React.Component {
         });
       }, duration);
     });
+
+    if (newState !== this.state) this.setState(() => newState);
   }
 
   /**
@@ -160,7 +161,10 @@ function _beginTransition(state, transitionName, value) {
   return _setTransitionValues(state, transitionName, {
     transitioningTo: value,
     transitioningFrom: transition.value,
-    transitioningSince: Date.now()
+    transitioningSince: Date.now(),
+    // can be used to add starting states for css transitions, is immediately removed
+    // after state update completes
+    isNew: true 
   });
 }
 
