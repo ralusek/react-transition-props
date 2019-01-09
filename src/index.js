@@ -27,13 +27,20 @@ export default class TransitionManager extends React.Component {
    * 
    */
   static getDerivedStateFromProps(props, state) {
-    if (!state.initialized) return _initialize(props, state);
+    if (!state.initialized) state = _initialize(props, state);
 
     Object.keys(props.transitions).forEach(transitionName => {
       const newValue = props.transitions[transitionName].value;
       const oldValue = state.transitions[transitionName].value;
       const transitioningTo = state.transitions[transitionName].transitioningTo;
-      if ((newValue !== oldValue) && (newValue !== transitioningTo)) state = _beginTransition(state, transitionName, newValue);
+
+      state = _updateTransitionConfigs(state, transitionName, props.transitions[transitionName] || {});
+      
+      if (newValue === transitioningTo) return;
+
+      if (oldValue === newValue && (transitioningTo == null)) return;
+
+      state = _beginTransition(state, transitionName, newValue);
     });
 
     return state;
@@ -50,6 +57,7 @@ export default class TransitionManager extends React.Component {
 
     Object.keys(transitions).forEach(transitionName => {
       const transition = transitions[transitionName];
+
       if (!transition.isNew) return; // Not new transition, ignore.
 
       newState = _setTransitionValues(newState, transitionName, {isNew: false});
@@ -58,7 +66,6 @@ export default class TransitionManager extends React.Component {
 
       clearTimeout(previous);
 
-      const duration = transition.duration[transition.value] || transition.duration;
       const current = this.timeouts[transitionName] = setTimeout(() => {
         // Redundant check against race conditions to ensure that the same
         // transition is still active.
@@ -70,10 +77,11 @@ export default class TransitionManager extends React.Component {
             value: transition.transitioningTo,
             transitioningTo: null,
             transitioningFrom: null,
-            transitioningSince: null
+            transitioningSince: null,
+            duration: null
           });
         });
-      }, duration);
+      }, transition.duration);
     });
 
     if (newState !== this.state) this.setState(() => newState);
@@ -125,6 +133,7 @@ function _initialize(props, state) {
   state = {
     ...state,
     transitions: {},
+    transitionConfigs: {},
     initialized: true
   };
 
@@ -134,13 +143,10 @@ function _initialize(props, state) {
   Object.keys(transitionConfigs).forEach(transitionName => {
     let { value, startingState, duration } = transitionConfigs[transitionName];
 
-    duration = duration == null ? 333 : duration;
-
     transitions[transitionName] = {
       value: startingState != null ? startingState : value,
       transitioningTo: null,
-      transitioningFrom: null,
-      duration
+      transitioningFrom: null
     }
 
     if (startingState != null) state = _beginTransition(state, transitionName, props.transitions[transitionName].value);
@@ -149,23 +155,55 @@ function _initialize(props, state) {
   return state;
 }
 
+/**
+ *
+ */
+function _updateTransitionConfigs(state, transitionName, config) {
+  return {
+    ...state,
+    transitionConfigs: {
+      ...state.transitionConfigs,
+      [transitionName]: {
+        duration: config.duration == null ? 333 : config.duration,
+        rollbackTimeOnReversion: config.rollbackTimeOnReversion !== false
+      }
+    }
+  }
+}
+
 
 /**
  *
  */
 function _beginTransition(state, transitionName, value) {
-  const transition = state.transitions[transitionName];
+  const transitionConfig = state.transitionConfigs[transitionName];
+  const existingTransition = state.transitions[transitionName];
 
-  if (value === transition.value) return state; // No change in destination, ignore.
+  const { transitioningSince } = existingTransition;
 
-  return _setTransitionValues(state, transitionName, {
+  const newTransition = {
     transitioningTo: value,
-    transitioningFrom: transition.value,
+    transitioningFrom: transitioningSince && existingTransition.value,
     transitioningSince: Date.now(),
+    duration: transitionConfig.duration,
     // can be used to add starting states for css transitions, is immediately removed
     // after state update completes
-    isNew: true 
-  });
+    isNew: true,
+    value: transitioningSince ? undefined : existingTransition.value
+  };
+
+  // If transition is in progress and we are reverting to a previous value,
+  // rollback the duration for the time the existing transition has been in
+  // progress.
+  if (
+    transitioningSince &&
+    (value === existingTransition.value) &&
+    transitionConfig.rollbackTimeOnReversion
+  ) {
+    newTransition.duration = Date.now() - existingTransition.transitioningSince;
+  }
+
+  return _setTransitionValues(state, transitionName, newTransition);
 }
 
 
